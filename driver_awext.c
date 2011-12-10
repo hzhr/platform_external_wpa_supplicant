@@ -569,10 +569,24 @@ int wpa_driver_awext_set_ifflags(struct wpa_driver_awext_data *drv, int flags)
 	return wpa_driver_wext_set_ifflags(drv->wext, flags);
 }
 
+static int wifi_iface_up(struct wpa_driver_awext_data *drv)
+{
+	struct ifreq ifr;
+	int ret;
+
+	os_strncpy(ifr.ifr_ifrn.ifrn_name, drv->ifname, IFNAMSIZ);
+	ret = ioctl(drv->ioctl_sock, SIOCGIFFLAGS, &ifr);
+	
+	os_strncpy(ifr.ifr_ifrn.ifrn_name, drv->ifname, IFNAMSIZ);
+	ifr.ifr_flags |=  (IFF_UP | IFF_RUNNING);
+	ret = ioctl(drv->ioctl_sock, SIOCSIFFLAGS, &ifr);
+
+	return ret;
+}
+
 void * wpa_driver_awext_init(void *ctx, const char *ifname)
 {
 	struct wpa_driver_awext_data *drv;
-	struct ifreq ifr;
 	
 	drv = os_zalloc(sizeof(*drv));
 	if (drv == NULL)
@@ -595,13 +609,8 @@ void * wpa_driver_awext_init(void *ctx, const char *ifname)
 		return NULL;
 	}
 
-	os_strncpy(ifr.ifr_ifrn.ifrn_name, ifname, IFNAMSIZ);
-	ioctl(drv->ioctl_sock, SIOCGIFFLAGS, &ifr);
-	
-	os_strncpy(ifr.ifr_ifrn.ifrn_name, ifname, IFNAMSIZ);
-	ifr.ifr_flags |=  (IFF_UP | IFF_RUNNING);
-	ioctl(drv->ioctl_sock, SIOCSIFFLAGS, &ifr);
-	
+	wifi_iface_up(drv);
+
 	return drv;
 }
 
@@ -621,7 +630,21 @@ void wpa_driver_awext_scan_timeout(void *eloop_ctx, void *timeout_ctx)
 int wpa_driver_awext_scan(void *priv, const u8 *ssid, size_t ssid_len)
 {
 	struct wpa_driver_awext_data *drv = priv;
-	return wpa_driver_wext_scan(drv->wext, ssid, ssid_len);
+	int ret;
+	int retry = 2;
+
+	do {
+		ret = wpa_driver_wext_scan(drv->wext, ssid, ssid_len);
+		if (ret) {
+			wpa_printf(MSG_WARNING, "AP scan failed, retry...");
+			wifi_iface_up(priv);
+			sleep(2);
+			retry--;
+		}
+	} while (ret && retry);
+	wpa_printf(MSG_WARNING, "AP scan OK.");
+
+	return ret;
 }
 
 int wpa_driver_awext_get_scan_results(void *priv,
